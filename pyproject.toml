@@ -12,3 +12,10 @@ dependencies = [
 ]
 [tool.uv.sources]
 cloudscraper = { git="https://github.com/VeNoMouS/cloudscraper", tag="3.0.0"}
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "mypy>=2.1.0",
+    "ruff>=0.15.20",
+]

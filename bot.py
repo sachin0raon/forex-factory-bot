@@ -32,6 +32,8 @@ def authorized(func):
 
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.effective_chat or not update.message:
+            return
         chat_id = update.effective_chat.id
         if chat_id not in AUTHORIZED_CHAT_IDS:
             logger.warning("Unauthorized access attempt from chat %s", chat_id)
@@ -47,8 +49,10 @@ def authorized(func):
 # ---------------------------------------------------------------------------
 
 @authorized
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send welcome message and register the chat as a subscriber."""
+    if not update.effective_chat or not update.message:
+        return
     chat_id = update.effective_chat.id
     is_new = await db.add_subscriber(chat_id)
 
@@ -78,11 +82,13 @@ async def cron_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     Without arguments: display the current cron expression.
     With arguments:    update the cron expression.
     """
+    if not update.message:
+        return
     args = context.args
     if not args:
         current = await scheduler.get_current_cron()
         await update.message.reply_text(
-            f"⏰ *Current cron schedule \\(UTC\\):*\n`{scraper._escape_md(current)}`",
+            f"⏰ *Current cron schedule \\(UTC\\):*\n`{scraper.escape_md(current)}`",
             parse_mode="MarkdownV2",
         )
         return
@@ -91,7 +97,7 @@ async def cron_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         await scheduler.update_cron(new_cron)
         await update.message.reply_text(
-            f"✅ Cron schedule updated to:\n`{scraper._escape_md(new_cron)}`",
+            f"✅ Cron schedule updated to:\n`{scraper.escape_md(new_cron)}`",
             parse_mode="MarkdownV2",
         )
     except ValueError as exc:
@@ -103,8 +109,10 @@ async def cron_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ---------------------------------------------------------------------------
 
 @authorized
-async def fetch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def fetch_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
     """Manually trigger the data fetch process."""
+    if not update.message:
+        return
     await update.message.reply_text("⏳ Fetching data from ForexFactory…")
 
     try:
@@ -123,7 +131,7 @@ async def fetch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
     # Split if needed
-    chunks = scheduler._split_message(summary, 4000)
+    chunks = scraper.split_message(summary, 4000)
     for chunk in chunks:
         await update.message.reply_text(chunk, parse_mode="MarkdownV2")
 
@@ -133,8 +141,10 @@ async def fetch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 # ---------------------------------------------------------------------------
 
 @authorized
-async def events_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def events_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show current week's events from the database."""
+    if not update.message:
+        return
     events = await db.get_current_week_events()
 
     if not events:
@@ -145,6 +155,6 @@ async def events_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         events, title="📅 *This Week's Events*"
     )
 
-    chunks = scheduler._split_message(summary, 4000)
+    chunks = scraper.split_message(summary, 4000)
     for chunk in chunks:
         await update.message.reply_text(chunk, parse_mode="MarkdownV2")

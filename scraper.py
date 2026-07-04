@@ -6,6 +6,7 @@ from the ForexFactory calendar API.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import cloudscraper
@@ -26,6 +27,9 @@ PAYLOAD = {
     "currencies": [9],
 }
 
+_FETCH_MAX_RETRIES = 3
+_FETCH_RETRY_BASE_DELAY = 2  # seconds; doubles each attempt
+
 
 def _create_scraper() -> cloudscraper.CloudScraper:
     """Create a cloudscraper instance with stealth options."""
@@ -38,16 +42,27 @@ def _create_scraper() -> cloudscraper.CloudScraper:
 def fetch_forex_data() -> dict:
     """
     Send POST request to ForexFactory and return the raw JSON response.
+    Retries up to _FETCH_MAX_RETRIES times with exponential back-off.
     This is a *synchronous* call (cloudscraper is not async) and should be
     run in an executor when called from async code.
     """
-    scraper = _create_scraper()
-    logger.info("Fetching ForexFactory calendar data …")
-    response = scraper.post(FOREXFACTORY_URL, json=PAYLOAD)
-    response.raise_for_status()
-    data = response.json()
-    logger.info("Received %d day(s) from ForexFactory", len(data.get("days", [])))
-    return data
+    last_exc: Exception | None = None
+    for attempt in range(_FETCH_MAX_RETRIES):
+        try:
+            s = _create_scraper()
+            logger.info("Fetching ForexFactory calendar data (attempt %d) …", attempt + 1)
+            response = s.post(FOREXFACTORY_URL, json=PAYLOAD)
+            response.raise_for_status()
+            data = response.json()
+            logger.info("Received %d day(s) from ForexFactory", len(data.get("days", [])))
+            return data
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _FETCH_MAX_RETRIES - 1:
+                delay = _FETCH_RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning("Fetch attempt %d failed (%s); retrying in %ds", attempt + 1, exc, delay)
+                time.sleep(delay)
+    raise RuntimeError(f"ForexFactory fetch failed after {_FETCH_MAX_RETRIES} attempts") from last_exc
 
 
 def parse_events(data: dict) -> list[dict]:
@@ -94,19 +109,19 @@ def format_event_message(event: dict) -> str:
         date_str = event.get("eventDate", "N/A")
 
     lines = [
-        f"{impact_emoji} *{_escape_md(event['name'])}*",
-        f"📅 {_escape_md(date_str)}",
-        f"🌍 {_escape_md(event.get('country', ''))} \\| 💰 {_escape_md(event.get('currency', ''))}",
-        f"📊 Impact: {_escape_md(event.get('impactTitle', ''))}",
+        f"{impact_emoji} *{escape_md(event['name'])}*",
+        f"📅 {escape_md(date_str)}",
+        f"🌍 {escape_md(event.get('country', ''))} \\| 💰 {escape_md(event.get('currency', ''))}",
+        f"📊 Impact: {escape_md(event.get('impactTitle', ''))}",
     ]
 
     forecast = event.get("forecast", "")
     actual = event.get("actual", "")
 
     if forecast:
-        lines.append(f"🔮 Forecast: `{_escape_md(forecast)}`")
+        lines.append(f"🔮 Forecast: `{escape_md(forecast)}`")
     if actual:
-        lines.append(f"✅ Actual: `{_escape_md(actual)}`")
+        lines.append(f"✅ Actual: `{escape_md(actual)}`")
 
     return "\n".join(lines)
 
@@ -126,7 +141,7 @@ def format_events_summary(events: list[dict], title: str = "📰 *ForexFactory E
     return "\n".join(parts)
 
 
-def _escape_md(text: str) -> str:
+def escape_md(text: str) -> str:
     """Escape special characters for Telegram MarkdownV2."""
     special = r"_*[]()~`>#+-=|{}.!"
     escaped = ""
@@ -136,3 +151,21 @@ def _escape_md(text: str) -> str:
         else:
             escaped += ch
     return escaped
+
+
+def split_message(text: str, max_len: int) -> list[str]:
+    """Split a message into chunks respecting the Telegram character limit."""
+    if len(text) <= max_len:
+        return [text]
+
+    chunks: list[str] = []
+    while text:
+        if len(text) <= max_len:
+            chunks.append(text)
+            break
+        idx = text.rfind("\n", 0, max_len)
+        if idx == -1:
+            idx = max_len
+        chunks.append(text[:idx])
+        text = text[idx:].lstrip("\n")
+    return chunks

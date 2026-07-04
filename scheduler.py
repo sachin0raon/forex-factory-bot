@@ -123,8 +123,11 @@ async def fetch_and_notify() -> list[dict]:
     """
     loop = asyncio.get_running_loop()
 
-    # Step 1 – Fetch (blocking I/O → run in executor)
-    raw_data = await loop.run_in_executor(None, scraper.fetch_forex_data)
+    # Step 1 – Fetch (blocking I/O → run in executor, with timeout)
+    raw_data = await asyncio.wait_for(
+        loop.run_in_executor(None, scraper.fetch_forex_data),
+        timeout=60.0,
+    )
 
     # Step 2 – Parse
     events = scraper.parse_events(raw_data)
@@ -155,7 +158,10 @@ async def fetch_event_actual(event_id: int, dateline: int) -> None:
     loop = asyncio.get_running_loop()
 
     try:
-        raw_data = await loop.run_in_executor(None, scraper.fetch_forex_data)
+        raw_data = await asyncio.wait_for(
+            loop.run_in_executor(None, scraper.fetch_forex_data),
+            timeout=60.0,
+        )
     except Exception:
         logger.exception("Failed to re-fetch data for event %s", event_id)
         return
@@ -226,7 +232,7 @@ def _schedule_actual_checks(events: list[dict]) -> None:
 
 
 async def _notify_subscribers(events: list[dict], title: str) -> None:
-    """Send a formatted message to every subscriber."""
+    """Send a formatted message to every subscriber concurrently."""
     if _bot_app is None:
         logger.warning("Bot app not set – cannot send notifications")
         return
@@ -237,11 +243,9 @@ async def _notify_subscribers(events: list[dict], title: str) -> None:
         return
 
     message = scraper.format_events_summary(events, title=title)
+    chunks = scraper.split_message(message, 4000)
 
-    # Telegram messages have a 4096 char limit – split if needed
-    chunks = _split_message(message, 4000)
-
-    for chat_id in subscribers:
+    async def _send_to_chat(chat_id: int) -> None:
         for chunk in chunks:
             try:
                 await _bot_app.bot.send_message(
@@ -252,21 +256,6 @@ async def _notify_subscribers(events: list[dict], title: str) -> None:
             except Exception:
                 logger.exception("Failed to notify chat %s", chat_id)
 
+    await asyncio.gather(*[_send_to_chat(cid) for cid in subscribers])
 
-def _split_message(text: str, max_len: int) -> list[str]:
-    """Split a message into chunks respecting the max character limit."""
-    if len(text) <= max_len:
-        return [text]
 
-    chunks: list[str] = []
-    while text:
-        if len(text) <= max_len:
-            chunks.append(text)
-            break
-        # Try to split at a newline
-        idx = text.rfind("\n", 0, max_len)
-        if idx == -1:
-            idx = max_len
-        chunks.append(text[:idx])
-        text = text[idx:].lstrip("\n")
-    return chunks

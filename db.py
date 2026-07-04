@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pymongo import UpdateOne
 
 from config import MONGO_URI, MONGO_DB_NAME
 
@@ -93,13 +94,23 @@ async def upsert_event(event: dict) -> bool:
 
 async def upsert_events(events: list[dict]) -> list[dict]:
     """
-    Upsert a batch of events. Returns the list of *newly inserted* events.
+    Upsert a batch of events in a single bulk_write call.
+    Returns the list of *newly inserted* events.
     """
-    new_events: list[dict] = []
-    for event in events:
-        is_new = await upsert_event(event)
-        if is_new:
-            new_events.append(event)
+    if not events:
+        return []
+    db = await get_db()
+    operations = [
+        UpdateOne(
+            {"eventId": ev["eventId"], "dateline": ev["dateline"]},
+            {"$set": ev},
+            upsert=True,
+        )
+        for ev in events
+    ]
+    result = await db.events.bulk_write(operations, ordered=False)
+    # result.upserted_ids maps operation-index → ObjectId for newly inserted docs
+    new_events = [events[i] for i in (result.upserted_ids or {})]
     return new_events
 
 
