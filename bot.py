@@ -62,9 +62,9 @@ async def start_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
         "from the ForexFactory calendar\\.\n\n"
         "🔔 You are now *subscribed* for notifications\\.\n\n"
         "*Available Commands:*\n"
-        "• /cron \\– View or set the fetch schedule\n"
-        "• /fetch \\– Manually fetch latest events\n"
-        "• /events \\– Show this week's events"
+        "• /cron - View or set the fetch schedule\n"
+        "• /fetch - Manually fetch latest events\n"
+        "• /events - Show this week's events"
     )
     if not is_new:
         welcome += "\n\n_\\(You were already subscribed\\)_"
@@ -116,7 +116,7 @@ async def fetch_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text("⏳ Fetching data from ForexFactory…")
 
     try:
-        events = await scheduler.fetch_and_notify()
+        events = await scheduler.fetch_and_store()
     except Exception as exc:
         logger.exception("Manual fetch failed")
         await update.message.reply_text(f"❌ Fetch failed: {exc}")

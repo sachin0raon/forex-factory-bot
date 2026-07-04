@@ -110,43 +110,39 @@ def _parse_cron(expr: str) -> CronTrigger:
 # Core fetch-and-notify logic
 # ---------------------------------------------------------------------------
 
-async def fetch_and_notify() -> list[dict]:
+async def fetch_and_store() -> list[dict]:
     """
-    Main job:
-    1. Fetch data from ForexFactory (sync, run in executor).
-    2. Parse events.
-    3. Upsert into MongoDB.
-    4. Send notification to all subscribers.
-    5. Schedule one-off jobs for future events to capture the 'actual' value.
-
-    Returns the list of parsed events.
+    Fetch, parse, persist, and schedule actual-checks — without sending any notification.
+    Returns the list of parsed events (empty list if none found).
     """
     loop = asyncio.get_running_loop()
 
-    # Step 1 – Fetch (blocking I/O → run in executor, with timeout)
     raw_data = await asyncio.wait_for(
         loop.run_in_executor(None, scraper.fetch_forex_data),
         timeout=60.0,
     )
 
-    # Step 2 – Parse
     events = scraper.parse_events(raw_data)
     if not events:
         logger.warning("No events returned from ForexFactory")
         return []
 
-    # Step 3 – Upsert
     new_events = await db.upsert_events(events)
-    logger.info(
-        "Persisted %d new events out of %d total", len(new_events), len(events)
-    )
+    logger.info("Persisted %d new events out of %d total", len(new_events), len(events))
 
-    # Step 4 – Notify subscribers about all events
-    await _notify_subscribers(events, title="📰 *ForexFactory Weekly Events*")
-
-    # Step 5 – Schedule one-off jobs for future events
     _schedule_actual_checks(events)
 
+    return events
+
+
+async def fetch_and_notify() -> list[dict]:
+    """
+    Scheduled job: fetch + store, then broadcast to all subscribers.
+    Returns the list of parsed events.
+    """
+    events = await fetch_and_store()
+    if events:
+        await _notify_subscribers(events, title="📰 *ForexFactory Weekly Events*")
     return events
 
 

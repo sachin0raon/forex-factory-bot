@@ -36,6 +36,16 @@ def _create_scraper() -> cloudscraper.CloudScraper:
     return cloudscraper.create_scraper(
         browser="chrome",
         delay=5,
+        debug=True,
+        interpreter='js2py',
+        enable_stealth=True,
+        stealth_options={
+            'min_delay': 2.0,
+            'max_delay': 6.0,
+            'human_like_delays': True,
+            'randomize_headers': True,
+            'browser_quirks': True
+        },
     )
 
 
@@ -111,8 +121,6 @@ def format_event_message(event: dict) -> str:
     lines = [
         f"{impact_emoji} *{escape_md(event['name'])}*",
         f"📅 {escape_md(date_str)}",
-        f"🌍 {escape_md(event.get('country', ''))} \\| 💰 {escape_md(event.get('currency', ''))}",
-        f"📊 Impact: {escape_md(event.get('impactTitle', ''))}",
     ]
 
     forecast = event.get("forecast", "")
@@ -136,7 +144,7 @@ def format_events_summary(events: list[dict], title: str = "📰 *ForexFactory E
     parts = [title, ""]
     for ev in events:
         parts.append(format_event_message(ev))
-        parts.append("─" * 30)
+        parts.append("─" * 15)
 
     return "\n".join(parts)
 
