@@ -62,9 +62,9 @@ async def start_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
         "from the ForexFactory calendar\\.\n\n"
         "🔔 You are now *subscribed* for notifications\\.\n\n"
         "*Available Commands:*\n"
-        "• /cron - View or set the fetch schedule\n"
-        "• /fetch - Manually fetch latest events\n"
-        "• /events - Show this week's events"
+        "• /cron \\– View or set the fetch schedule\n"
+        "• /fetch \\– Manually fetch latest events\n"
+        "• /events \\– Show this week's events"
     )
     if not is_new:
         welcome += "\n\n_\\(You were already subscribed\\)_"
