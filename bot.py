@@ -3,10 +3,13 @@ Telegram bot command handlers.
 
 Commands
 --------
-/start  – Welcome message & subscribe for notifications.
-/cron   – View or update the cron schedule.
-/fetch  – Manually trigger data fetch + notify.
-/events – Show current week events from the database.
+/start     – Welcome message & subscribe for notifications.
+/cron      – View or update the cron schedule.
+/fetch     – Manually trigger calendar data fetch + notify.
+/events    – Show current week events from the database.
+/news      – Show recent scored gold/USD news.
+/summary   – Generate an on-demand overall gold outlook.
+/fetchnews – Manually trigger a news poll + notify.
 """
 
 import logging
@@ -16,6 +19,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import db
+import llm
+import news
 import scheduler
 import scraper
 from config import AUTHORIZED_CHAT_IDS
@@ -58,13 +63,16 @@ async def start_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
 
     welcome = (
         "👋 *Welcome to ForexFactory Bot\\!*\n\n"
-        "I keep you updated with high\\-impact economic events "
-        "from the ForexFactory calendar\\.\n\n"
+        "I keep you updated with high\\-impact economic events from the "
+        "ForexFactory calendar, plus gold/USD news scored for sentiment\\.\n\n"
         "🔔 You are now *subscribed* for notifications\\.\n\n"
         "*Available Commands:*\n"
         "• /cron \\– View or set the fetch schedule\n"
         "• /fetch \\– Manually fetch latest events\n"
-        "• /events \\– Show this week's events"
+        "• /events \\– Show this week's events\n"
+        "• /news \\– Show recent scored gold/USD news\n"
+        "• /summary \\– Generate an overall gold outlook\n"
+        "• /fetchnews \\– Manually poll news now"
     )
     if not is_new:
         welcome += "\n\n_\\(You were already subscribed\\)_"
@@ -158,3 +166,77 @@ async def events_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) ->
     chunks = scraper.split_message(summary, 4000)
     for chunk in chunks:
         await update.message.reply_text(chunk, parse_mode="MarkdownV2")
+
+
+# ---------------------------------------------------------------------------
+# /news
+# ---------------------------------------------------------------------------
+
+@authorized
+async def news_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show recently scored gold/USD news from the database."""
+    if not update.message:
+        return
+    items = await db.get_recent_news()
+
+    if not items:
+        await update.message.reply_text("ℹ️ No recent news found.")
+        return
+
+    summary = news.format_news_summary(items)
+    chunks = scraper.split_message(summary, 4000)
+    for chunk in chunks:
+        await update.message.reply_text(chunk, parse_mode="MarkdownV2")
+
+
+# ---------------------------------------------------------------------------
+# /summary
+# ---------------------------------------------------------------------------
+
+@authorized
+async def summary_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate an on-demand overall gold outlook from recent news + upcoming events."""
+    if not update.message:
+        return
+    await update.message.reply_text("🤔 Analyzing recent news and upcoming events…")
+
+    recent_news = await db.get_recent_news()
+    upcoming_events = await db.get_upcoming_events()
+
+    try:
+        outlook = await llm.generate_gold_summary(recent_news, upcoming_events)
+    except Exception as exc:
+        logger.exception("Summary generation failed")
+        await update.message.reply_text(f"❌ Summary failed: {exc}")
+        return
+
+    await update.message.reply_text(f"🔮 Gold Outlook\n\n{outlook}")
+
+
+# ---------------------------------------------------------------------------
+# /fetchnews
+# ---------------------------------------------------------------------------
+
+@authorized
+async def fetchnews_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manually trigger a news poll (fetch, filter, score, notify)."""
+    if not update.message:
+        return
+    await update.message.reply_text("⏳ Polling news feeds…")
+
+    try:
+        scored_items = await scheduler.fetch_and_notify_news()
+    except Exception as exc:
+        logger.exception("Manual news poll failed")
+        await update.message.reply_text(f"❌ News poll failed: {exc}")
+        return
+
+    if not scored_items:
+        await update.message.reply_text("ℹ️ No new relevant news found.")
+        return
+
+    # fetch_and_notify_news() already broadcasts the formatted items to all
+    # subscribers; just confirm the outcome to the caller here.
+    await update.message.reply_text(
+        f"✅ Found and notified {len(scored_items)} new item(s)."
+    )

@@ -30,10 +30,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _BOT_COMMANDS = [
-    BotCommand("start",  "Subscribe and show welcome message"),
-    BotCommand("fetch",  "Fetch latest ForexFactory events now"),
-    BotCommand("events", "Show this week's events from the database"),
-    BotCommand("cron",   "View or update the fetch schedule (IST)"),
+    BotCommand("start",     "Subscribe and show welcome message"),
+    BotCommand("fetch",     "Fetch latest ForexFactory events now"),
+    BotCommand("events",    "Show this week's events from the database"),
+    BotCommand("cron",      "View or update the fetch schedule (IST)"),
+    BotCommand("news",      "Show recent scored gold/USD news"),
+    BotCommand("summary",   "Generate an on-demand gold outlook"),
+    BotCommand("fetchnews", "Manually poll news feeds now"),
 ]
 
 
@@ -82,6 +85,9 @@ def main() -> None:
     app.add_handler(CommandHandler("cron", bot.cron_command))
     app.add_handler(CommandHandler("fetch", bot.fetch_command))
     app.add_handler(CommandHandler("events", bot.events_command))
+    app.add_handler(CommandHandler("news", bot.news_command))
+    app.add_handler(CommandHandler("summary", bot.summary_command))
+    app.add_handler(CommandHandler("fetchnews", bot.fetchnews_command))
 
     logger.info("🚀 ForexFactory Bot starting …")
     app.run_polling(drop_pending_updates=True)

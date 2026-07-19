@@ -26,5 +26,5 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Run the bot
-CMD ["uv", "run", "python", "main.py"]
+# Run the bot (--no-sync: environment was already synced at build time)
+CMD ["uv", "run", "--no-sync", "python", "main.py"]

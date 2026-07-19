@@ -10,10 +10,19 @@ from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 import db
+import llm
+import news
 import scraper
-from config import DEFAULT_CRON
+from config import (
+    ARTICLE_SEARCH_DELAY_MINUTES,
+    ARTICLE_SEARCH_MAX_ATTEMPTS,
+    ARTICLE_SEARCH_RETRY_MINUTES,
+    DEFAULT_CRON,
+    NEWS_POLL_MINUTES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +32,7 @@ _scheduler: AsyncIOScheduler | None = None
 _bot_app = None
 
 MAIN_JOB_ID = "forex_fetch_job"
+NEWS_JOB_ID = "news_fetch_job"
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +74,19 @@ async def start_scheduler() -> None:
         replace_existing=True,
         name="ForexFactory weekly fetch",
     )
+    sched.add_job(
+        fetch_and_notify_news,
+        trigger=IntervalTrigger(minutes=NEWS_POLL_MINUTES),
+        id=NEWS_JOB_ID,
+        replace_existing=True,
+        name="Gold/USD news poll",
+    )
+
     sched.start()
-    logger.info("Scheduler started with cron: %s", cron_expr)
+    logger.info(
+        "Scheduler started with cron: %s (news poll every %d min)",
+        cron_expr, NEWS_POLL_MINUTES,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +152,7 @@ async def fetch_and_store() -> list[dict]:
     logger.info("Persisted %d new events out of %d total", len(new_events), len(events))
 
     _schedule_actual_checks(events)
+    _schedule_article_searches(events)
 
     return events
 
@@ -144,6 +166,40 @@ async def fetch_and_notify() -> list[dict]:
     if events:
         await _notify_subscribers(events, title="📰 *ForexFactory Weekly Events*")
     return events
+
+
+async def fetch_and_notify_news() -> list[dict]:
+    """
+    Scheduled job: poll news feeds, filter to gold/USD-relevant items, dedupe
+    against the DB (read-only check), score genuinely new items with Claude,
+    persist the scored items, and broadcast to subscribers.
+
+    Nothing is written to the DB until *after* scoring succeeds: if
+    llm.score_news_batch raises (rate limit, timeout, network blip), this
+    function propagates the exception without persisting anything, so the
+    same items are picked up again on the next poll instead of being
+    silently marked "seen" and lost. The scheduled job itself is protected by
+    APScheduler's default exception logging; the manual /fetchnews command
+    surfaces the error directly to the caller.
+    """
+    try:
+        raw_items = await asyncio.wait_for(news.fetch_all_news(), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.warning("News poll timed out while fetching feeds")
+        return []
+
+    relevant = [item for item in raw_items if news.is_relevant(item)]
+    new_items = await db.filter_unseen_items(relevant)
+    if not new_items:
+        logger.info("News poll: no new relevant items")
+        return []
+
+    logger.info("News poll: %d new relevant item(s), scoring with Claude", len(new_items))
+    scored_items = await llm.score_news_batch(new_items)
+
+    await db.upsert_news_items(scored_items)
+    await _notify_subscribers_news(scored_items)
+    return scored_items
 
 
 async def fetch_event_actual(event_id: int, dateline: int) -> None:
@@ -186,6 +242,123 @@ async def fetch_event_actual(event_id: int, dateline: int) -> None:
         logger.info("Actual still not available for event %s", event_id)
 
 
+ARTICLE_SEARCH_JOB_PREFIX = "article_search"
+
+
+async def search_event_article(
+    event_id: int, dateline: int, event_name: str, event_date_iso: str, attempt: int
+) -> None:
+    """
+    One-off, self-rescheduling job: search FXStreet for the article covering a
+    no-forecast (speech/testimony) calendar event, retrying up to
+    ARTICLE_SEARCH_MAX_ATTEMPTS times, ARTICLE_SEARCH_RETRY_MINUTES apart.
+    Persists the terminal outcome (found/not_found) and notifies subscribers
+    either way.
+    """
+    if await db.get_event_article(event_id, dateline):
+        # Already resolved by a previous chain (e.g. duplicate scheduling from
+        # a re-poll) — nothing left to do.
+        return
+
+    # This is a bounded, self-scheduling chain of one-off jobs, not a
+    # recurring poll — unlike fetch_and_notify_news, there's no "next cycle"
+    # safety net. Any failure here (feed fetch, Claude match call — rate
+    # limit, network blip, timeout) must fall through to the same
+    # retry-or-give-up logic as a genuine "no match", or the whole chain would
+    # die silently: no retry scheduled, no notification ever sent, nothing
+    # persisted.
+    match = None
+    try:
+        try:
+            candidates_raw = await asyncio.wait_for(news.fetch_fxstreet_recent(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.warning("Article search for '%s' timed out fetching FXStreet", event_name)
+            candidates_raw = []
+
+        event_dt = datetime.fromisoformat(event_date_iso)
+        candidates = [
+            c for c in candidates_raw
+            if datetime.fromisoformat(c["publishedAt"]) >= event_dt
+        ][:15]
+
+        if candidates:
+            match = await llm.match_event_article(event_name, event_date_iso, candidates)
+    except Exception:
+        logger.exception(
+            "Article search attempt %d for '%s' failed; treating as no match", attempt, event_name
+        )
+        match = None
+
+    if match:
+        try:
+            enrichment = await llm.summarize_event_article(event_name, match)
+        except Exception:
+            # We DID find the right article — don't discard that just because
+            # the write-up call failed. Fall back to a minimal summary rather
+            # than re-running (and possibly losing) the match on a retry.
+            logger.exception(
+                "Found a match for '%s' but summarization failed; using a minimal fallback",
+                event_name,
+            )
+            enrichment = {
+                "summary": match["title"],
+                "market_reaction": "Not specified (summary generation failed).",
+            }
+        doc = {
+            "eventId": event_id,
+            "dateline": dateline,
+            "eventName": event_name,
+            "eventDate": event_date_iso,
+            "status": "found",
+            "articleLink": match["link"],
+            "articleTitle": match["title"],
+            "summary": enrichment["summary"],
+            "marketReaction": enrichment["market_reaction"],
+            "attempts": attempt,
+            "resolvedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.upsert_event_article(doc)
+        await _notify_event_article_found(doc)
+        logger.info("Article search: found match for '%s' on attempt %d", event_name, attempt)
+        return
+
+    if attempt < ARTICLE_SEARCH_MAX_ATTEMPTS:
+        sched = get_scheduler()
+        next_run = datetime.now(timezone.utc) + timedelta(minutes=ARTICLE_SEARCH_RETRY_MINUTES)
+        job_id = f"{ARTICLE_SEARCH_JOB_PREFIX}_{event_id}_{dateline}_{attempt + 1}"
+        sched.add_job(
+            search_event_article,
+            "date",
+            run_date=next_run,
+            args=[event_id, dateline, event_name, event_date_iso, attempt + 1],
+            id=job_id,
+            replace_existing=True,
+            name=f"Article search: {event_name} (attempt {attempt + 1})",
+        )
+        logger.info(
+            "Article search: no match for '%s' on attempt %d, retrying at %s",
+            event_name, attempt, next_run.isoformat(),
+        )
+        return
+
+    doc = {
+        "eventId": event_id,
+        "dateline": dateline,
+        "eventName": event_name,
+        "eventDate": event_date_iso,
+        "status": "not_found",
+        "articleLink": None,
+        "articleTitle": None,
+        "summary": None,
+        "marketReaction": None,
+        "attempts": attempt,
+        "resolvedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.upsert_event_article(doc)
+    await _notify_event_article_not_found(doc)
+    logger.info("Article search: exhausted %d attempt(s) for '%s', no match found", attempt, event_name)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -201,6 +374,12 @@ def _schedule_actual_checks(events: list[dict]) -> None:
     for ev in events:
         # Skip events that already have an actual value
         if ev.get("actual"):
+            continue
+
+        # Speech/testimony-type events (no forecast) never publish an actual
+        # value either — they get an FXStreet article search instead, via
+        # _schedule_article_searches.
+        if not ev.get("forecast"):
             continue
 
         try:
@@ -227,8 +406,78 @@ def _schedule_actual_checks(events: list[dict]) -> None:
         )
 
 
+def _schedule_article_searches(events: list[dict]) -> None:
+    """
+    For each future no-forecast (speech/testimony) event, schedule the first
+    FXStreet article-search attempt at eventDate + ARTICLE_SEARCH_DELAY_MINUTES.
+    """
+    sched = get_scheduler()
+    now = datetime.now(timezone.utc)
+
+    for ev in events:
+        if ev.get("forecast"):
+            continue  # has a forecast → data-release event, not a speech
+
+        try:
+            event_dt = datetime.fromisoformat(ev["eventDate"])
+        except (ValueError, KeyError):
+            continue
+
+        run_at = event_dt + timedelta(minutes=ARTICLE_SEARCH_DELAY_MINUTES)
+        if run_at <= now:
+            continue  # Already in the past
+
+        job_id = f"{ARTICLE_SEARCH_JOB_PREFIX}_{ev['eventId']}_{ev['dateline']}_1"
+        sched.add_job(
+            search_event_article,
+            "date",
+            run_date=run_at,
+            args=[ev["eventId"], ev["dateline"], ev["name"], ev["eventDate"], 1],
+            id=job_id,
+            replace_existing=True,
+            name=f"Article search: {ev['name']} (attempt 1)",
+        )
+        logger.info(
+            "Scheduled article search for '%s' at %s", ev["name"], run_at.isoformat()
+        )
+
+
 async def _notify_subscribers(events: list[dict], title: str) -> None:
-    """Send a formatted message to every subscriber concurrently."""
+    """Send a formatted calendar-events message to every subscriber."""
+    message = scraper.format_events_summary(events, title=title)
+    await _broadcast(scraper.split_message(message, 4000))
+
+
+async def _notify_subscribers_news(items: list[dict], title: str = "📰 *Gold/USD News*") -> None:
+    """Send a formatted news message to every subscriber."""
+    message = news.format_news_summary(items, title=title)
+    await _broadcast(scraper.split_message(message, 4000))
+
+
+async def _notify_event_article_found(doc: dict) -> None:
+    """Notify subscribers that FXStreet coverage was found for a speech/testimony event."""
+    lines = [
+        f"📰 *Article Found: {scraper.escape_md(doc['eventName'])}*",
+        f"📄 {scraper.escape_md(doc['articleTitle'])}",
+        f"💡 {scraper.escape_md(doc['summary'])}",
+        f"📊 Market Reaction: {scraper.escape_md(doc['marketReaction'])}",
+        f"🔗 {scraper.escape_md(doc['articleLink'])}",
+    ]
+    await _broadcast(scraper.split_message("\n".join(lines), 4000))
+
+
+async def _notify_event_article_not_found(doc: dict) -> None:
+    """Notify subscribers that no FXStreet coverage was found after all retry attempts."""
+    lines = [
+        f"🔍 *No Article Found: {scraper.escape_md(doc['eventName'])}*",
+        f"Searched FXStreet {doc['attempts']} time\\(s\\) after the event — "
+        "no matching article found\\.",
+    ]
+    await _broadcast(scraper.split_message("\n".join(lines), 4000))
+
+
+async def _broadcast(chunks: list[str]) -> None:
+    """Send pre-formatted message chunks to every subscriber concurrently."""
     if _bot_app is None:
         logger.warning("Bot app not set – cannot send notifications")
         return
@@ -237,9 +486,6 @@ async def _notify_subscribers(events: list[dict], title: str) -> None:
     if not subscribers:
         logger.info("No subscribers to notify")
         return
-
-    message = scraper.format_events_summary(events, title=title)
-    chunks = scraper.split_message(message, 4000)
 
     async def _send_to_chat(chat_id: int) -> None:
         for chunk in chunks:

@@ -5,6 +5,8 @@ Collections
 -----------
 subscribers : { "chatId": int }
 events      : { "eventId": int, "dateline": int, ... }
+news        : { "guid": str, "title": str, ..., "sentiment": str, "score": float }
+event_articles : { "eventId": int, "dateline": int, "status": "found"|"not_found", ... }
 settings    : { "key": str, "value": str }   – stores the current cron expression
 """
 
@@ -13,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import UpdateOne
+from pymongo.errors import DuplicateKeyError
 
 from config import MONGO_URI, MONGO_DB_NAME
 
@@ -37,6 +40,10 @@ async def connect() -> AsyncIOMotorDatabase:
             [("eventId", 1), ("dateline", 1)], unique=True
         )
         await _db.subscribers.create_index("chatId", unique=True)
+        await _db.news.create_index("guid", unique=True)
+        await _db.event_articles.create_index(
+            [("eventId", 1), ("dateline", 1)], unique=True
+        )
         logger.info("Connected to MongoDB (%s)", MONGO_DB_NAME)
     return _db
 
@@ -60,8 +67,7 @@ async def add_subscriber(chat_id: int) -> bool:
         await db.subscribers.insert_one({"chatId": chat_id})
         logger.info("New subscriber added: %s", chat_id)
         return True
-    except Exception:
-        # Duplicate key – already subscribed
+    except DuplicateKeyError:
         return False
 
 
@@ -143,6 +149,94 @@ async def get_current_week_events() -> list[dict]:
     ).sort("eventDate", 1)
 
     return [doc async for doc in cursor]
+
+
+# ---------------------------------------------------------------------------
+# News
+# ---------------------------------------------------------------------------
+
+async def filter_unseen_items(items: list[dict]) -> list[dict]:
+    """
+    Read-only dedupe check: given candidate items (each with a 'guid'), return
+    the subset whose guid isn't already stored. Does NOT write anything —
+    callers should only persist (via upsert_news_items) *after* any downstream
+    processing (e.g. Claude scoring) succeeds, so a mid-pipeline failure leaves
+    these items eligible to be picked up again on the next poll instead of
+    being silently dropped.
+    """
+    if not items:
+        return []
+    db = await get_db()
+    guids = [item["guid"] for item in items]
+    cursor = db.news.find({"guid": {"$in": guids}}, {"_id": 0, "guid": 1})
+    existing = {doc["guid"] async for doc in cursor}
+    return [item for item in items if item["guid"] not in existing]
+
+
+async def upsert_news_items(items: list[dict]) -> list[dict]:
+    """
+    Upsert a batch of (already-processed) news items in a single bulk_write
+    call, matched by guid. Returns the list of *newly inserted* items.
+    """
+    if not items:
+        return []
+    db = await get_db()
+    operations = [
+        UpdateOne({"guid": item["guid"]}, {"$set": item}, upsert=True)
+        for item in items
+    ]
+    result = await db.news.bulk_write(operations, ordered=False)
+    new_items = [items[i] for i in (result.upserted_ids or {})]
+    return new_items
+
+
+async def get_recent_news(hours: int = 24) -> list[dict]:
+    """Return news items published within the last *hours*, newest first."""
+    db = await get_db()
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    cursor = db.news.find(
+        {"publishedAt": {"$gte": since}}, {"_id": 0}
+    ).sort("publishedAt", -1)
+    return [doc async for doc in cursor]
+
+
+async def get_upcoming_events(hours: int = 48) -> list[dict]:
+    """Return calendar events due within the next *hours*, soonest first."""
+    db = await get_db()
+    now = datetime.now(timezone.utc)
+    until = now + timedelta(hours=hours)
+    cursor = db.events.find(
+        {"eventDate": {"$gte": now.isoformat(), "$lt": until.isoformat()}},
+        {"_id": 0},
+    ).sort("eventDate", 1)
+    return [doc async for doc in cursor]
+
+
+# ---------------------------------------------------------------------------
+# Event articles (FXStreet coverage for no-forecast "speech" calendar events)
+# ---------------------------------------------------------------------------
+
+async def get_event_article(event_id: int, dateline: int) -> dict | None:
+    """
+    Fetch the resolved (found/not_found) outcome for an event's article search,
+    if one exists. Doubles as the idempotency guard: if a doc already exists,
+    the search chain for this event has already reached a terminal state and
+    shouldn't be re-scheduled or re-run.
+    """
+    db = await get_db()
+    return await db.event_articles.find_one(
+        {"eventId": event_id, "dateline": dateline}, {"_id": 0}
+    )
+
+
+async def upsert_event_article(doc: dict) -> None:
+    """Persist the terminal (found or not_found) outcome of an article search."""
+    db = await get_db()
+    await db.event_articles.update_one(
+        {"eventId": doc["eventId"], "dateline": doc["dateline"]},
+        {"$set": doc},
+        upsert=True,
+    )
 
 
 # ---------------------------------------------------------------------------

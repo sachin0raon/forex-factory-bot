@@ -28,3 +28,40 @@ if not AUTHORIZED_CHAT_IDS:
 
 # Default cron expression (minute hour day month day_of_week) – UTC
 DEFAULT_CRON: str = os.getenv("DEFAULT_CRON", "0 5 * * 1-5")
+
+# Which LLM backend powers news sentiment scoring, /summary, and the
+# event-article search/match. Only the active provider's API key is required.
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "anthropic").lower()
+if LLM_PROVIDER not in ("anthropic", "gemini"):
+    raise ValueError(
+        f"Invalid LLM_PROVIDER '{LLM_PROVIDER}': must be 'anthropic' or 'gemini'"
+    )
+
+if LLM_PROVIDER == "gemini":
+    GEMINI_API_KEY: str = os.environ["GEMINI_API_KEY"]
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    _DEFAULT_SENTIMENT_MODEL = "gemini-2.5-flash-lite"
+    _DEFAULT_SUMMARY_MODEL = "gemini-2.5-flash"
+else:
+    ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    _DEFAULT_SENTIMENT_MODEL = "claude-haiku-4-5-20251001"
+    _DEFAULT_SUMMARY_MODEL = "claude-sonnet-5"
+
+# How often (minutes) to poll news RSS feeds
+NEWS_POLL_MINUTES: int = int(os.getenv("NEWS_POLL_MINUTES", "15"))
+
+# Cheap/fast model for per-item sentiment scoring (runs every poll).
+# `or` (not getenv's default arg) so an accidentally-blank env var falls back
+# too, not just a fully-unset one.
+SENTIMENT_MODEL: str = os.getenv("SENTIMENT_MODEL") or _DEFAULT_SENTIMENT_MODEL
+
+# Higher-quality model for the on-demand /summary outlook (low frequency)
+SUMMARY_MODEL: str = os.getenv("SUMMARY_MODEL") or _DEFAULT_SUMMARY_MODEL
+
+# Speech/testimony calendar events (no forecast value) get an FXStreet article
+# search instead of an actual-value check. Delay before the first attempt,
+# max attempts, and the interval between retries are all configurable.
+ARTICLE_SEARCH_DELAY_MINUTES: int = int(os.getenv("ARTICLE_SEARCH_DELAY_MINUTES", "10"))
+ARTICLE_SEARCH_MAX_ATTEMPTS: int = int(os.getenv("ARTICLE_SEARCH_MAX_ATTEMPTS", "3"))
+ARTICLE_SEARCH_RETRY_MINUTES: int = int(os.getenv("ARTICLE_SEARCH_RETRY_MINUTES", "30"))
