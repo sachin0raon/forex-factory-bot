@@ -22,7 +22,17 @@ from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types as genai_types
 
-from config import ANTHROPIC_API_KEY, GEMINI_API_KEY, LLM_PROVIDER, SENTIMENT_MODEL, SUMMARY_MODEL
+from config import (
+    ANTHROPIC_API_KEY,
+    EVENT_SUMMARY_MAX_TOKENS,
+    GEMINI_API_KEY,
+    LLM_PROVIDER,
+    MATCH_MAX_TOKENS,
+    SENTIMENT_MAX_TOKENS,
+    SENTIMENT_MODEL,
+    SUMMARY_MAX_TOKENS,
+    SUMMARY_MODEL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +141,7 @@ async def score_news_batch(items: list[dict]) -> list[dict]:
         system=_SENTIMENT_SYSTEM_PROMPT,
         user_content=json.dumps(payload),
         model=SENTIMENT_MODEL,
-        max_tokens=2048,
+        max_tokens=SENTIMENT_MAX_TOKENS,
         timeout=_SENTIMENT_TIMEOUT_SECONDS,
         json_mode=True,
     )
@@ -141,7 +151,7 @@ async def score_news_batch(items: list[dict]) -> list[dict]:
             entry["guid"]: entry for entry in json.loads(_strip_code_fence(text))
         }
     except (json.JSONDecodeError, KeyError, TypeError):
-        logger.exception("Failed to parse Claude sentiment response: %s", text)
+        logger.exception("Failed to parse %s sentiment response: %s", LLM_PROVIDER, text)
         scored_by_guid = {}
 
     results = []
@@ -163,7 +173,7 @@ _SUMMARY_SYSTEM_PROMPT = (
     "briefing. Given recent scored news items and upcoming USD-relevant economic "
     "calendar events, write a concise overall gold outlook (bullish/bearish/neutral "
     "bias with your reasoning, plus what to watch for from the upcoming events). "
-    "Keep it under 150 words. Plain text, no markdown headers."
+    "Keep it under 250 words. Plain text, no markdown headers."
 )
 
 
@@ -189,7 +199,7 @@ async def generate_gold_summary(news_items: list[dict], upcoming_events: list[di
         system=_SUMMARY_SYSTEM_PROMPT,
         user_content=user_content,
         model=SUMMARY_MODEL,
-        max_tokens=512,
+        max_tokens=SUMMARY_MAX_TOKENS,
         timeout=_SUMMARY_TIMEOUT_SECONDS,
     )
     return text.strip()
@@ -236,7 +246,7 @@ async def match_event_article(
         system=_MATCH_SYSTEM_PROMPT,
         user_content=json.dumps(payload),
         model=SENTIMENT_MODEL,
-        max_tokens=256,
+        max_tokens=MATCH_MAX_TOKENS,
         timeout=_MATCH_TIMEOUT_SECONDS,
         json_mode=True,
     )
@@ -244,7 +254,7 @@ async def match_event_article(
     try:
         matched_link = json.loads(_strip_code_fence(text)).get("matched_link")
     except (json.JSONDecodeError, AttributeError):
-        logger.exception("Failed to parse Claude event-match response: %s", text)
+        logger.exception("Failed to parse %s event-match response: %s", LLM_PROVIDER, text)
         return None
 
     if not matched_link:
@@ -281,7 +291,7 @@ async def summarize_event_article(event_name: str, article: dict) -> dict:
         system=_EVENT_SUMMARY_SYSTEM_PROMPT,
         user_content=user_content,
         model=SUMMARY_MODEL,
-        max_tokens=384,
+        max_tokens=EVENT_SUMMARY_MAX_TOKENS,
         timeout=_SUMMARY_TIMEOUT_SECONDS,
         json_mode=True,
     )
@@ -293,5 +303,5 @@ async def summarize_event_article(event_name: str, article: dict) -> dict:
             "market_reaction": parsed.get("market_reaction", "Not specified."),
         }
     except json.JSONDecodeError:
-        logger.exception("Failed to parse Claude event-summary response: %s", text)
+        logger.exception("Failed to parse %s event-summary response: %s", LLM_PROVIDER, text)
         return {"summary": article["title"], "market_reaction": "Not specified."}

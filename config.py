@@ -59,6 +59,13 @@ SENTIMENT_MODEL: str = os.getenv("SENTIMENT_MODEL") or _DEFAULT_SENTIMENT_MODEL
 # Higher-quality model for the on-demand /summary outlook (low frequency)
 SUMMARY_MODEL: str = os.getenv("SUMMARY_MODEL") or _DEFAULT_SUMMARY_MODEL
 
+# Max output tokens per LLM call. Sentiment batches can be large (one JSON
+# entry per news item), so SENTIMENT_MAX_TOKENS needs room for 50+ items.
+SENTIMENT_MAX_TOKENS: int = int(os.getenv("SENTIMENT_MAX_TOKENS", "8192"))
+SUMMARY_MAX_TOKENS: int = int(os.getenv("SUMMARY_MAX_TOKENS", "512"))
+MATCH_MAX_TOKENS: int = int(os.getenv("MATCH_MAX_TOKENS", "256"))
+EVENT_SUMMARY_MAX_TOKENS: int = int(os.getenv("EVENT_SUMMARY_MAX_TOKENS", "384"))
+
 # Speech/testimony calendar events (no forecast value) get an FXStreet article
 # search instead of an actual-value check. Delay before the first attempt,
 # max attempts, and the interval between retries are all configurable.
