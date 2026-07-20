@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _BOT_COMMANDS = [
     BotCommand("start",     "Subscribe and show welcome message"),
+    BotCommand("unsub",     "Unsubscribe from notifications"),
     BotCommand("fetch",     "Fetch latest ForexFactory events now"),
     BotCommand("events",    "Show this week's events from the database"),
     BotCommand("cron",      "View or update the fetch schedule (IST)"),
@@ -82,6 +83,7 @@ def main() -> None:
 
     # Register command handlers
     app.add_handler(CommandHandler("start", bot.start_command))
+    app.add_handler(CommandHandler("unsub", bot.unsub_command))
     app.add_handler(CommandHandler("cron", bot.cron_command))
     app.add_handler(CommandHandler("fetch", bot.fetch_command))
     app.add_handler(CommandHandler("events", bot.events_command))

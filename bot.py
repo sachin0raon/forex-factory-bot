@@ -72,12 +72,37 @@ async def start_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
         "• /events \\– Show this week's events\n"
         "• /news \\– Show recent scored gold/USD news\n"
         "• /summary \\– Generate an overall gold outlook\n"
-        "• /fetchnews \\– Manually poll news now"
+        "• /fetchnews \\– Manually poll news now\n"
+        "• /unsub \\– Unsubscribe from notifications"
     )
     if not is_new:
         welcome += "\n\n_\\(You were already subscribed\\)_"
 
     await update.message.reply_text(welcome, parse_mode="MarkdownV2")
+
+
+# ---------------------------------------------------------------------------
+# /unsub
+# ---------------------------------------------------------------------------
+
+@authorized
+async def unsub_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Unsubscribe the current chat from notifications."""
+    if not update.effective_chat or not update.message:
+        return
+    chat_id = update.effective_chat.id
+    removed = await db.remove_subscriber(chat_id)
+    if removed:
+        await update.message.reply_text(
+            "🔕 You have been *unsubscribed* from notifications\\.\n"
+            "Use /start to subscribe again\\.",
+            parse_mode="MarkdownV2",
+        )
+    else:
+        await update.message.reply_text(
+            "ℹ️ You were not subscribed\\.",
+            parse_mode="MarkdownV2",
+        )
 
 
 # ---------------------------------------------------------------------------

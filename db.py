@@ -71,6 +71,19 @@ async def add_subscriber(chat_id: int) -> bool:
         return False
 
 
+async def remove_subscriber(chat_id: int) -> bool:
+    """
+    Remove *chat_id* from the subscribers collection.
+    Returns True if the subscriber existed and was removed, False if not found.
+    """
+    db = await get_db()
+    result = await db.subscribers.delete_one({"chatId": chat_id})
+    if result.deleted_count:
+        logger.info("Subscriber removed: %s", chat_id)
+        return True
+    return False
+
+
 async def get_all_subscribers() -> list[int]:
     """Return a list of all subscribed chat IDs."""
     db = await get_db()
