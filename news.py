@@ -50,7 +50,24 @@ GOLD_KEYWORDS = [
 # ~75% of FXStreet's general forex feed (every "X vs US Dollar" pair story,
 # every country's own inflation news), since FXStreet/InvestingLive write
 # about USD as counter-currency in nearly every article. This list trades
-# recall for precision to keep Claude batch sizes (and cost) down.
+# recall for precision to keep LLM batch sizes (and cost) down.
+
+# Articles matching any of these terms are excluded even if they also match a
+# GOLD_KEYWORD — crypto articles commonly mention "rate cut" or "Fed" in their
+# summaries and would otherwise slip through.
+EXCLUDE_KEYWORDS = [
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "crypto",
+    "cryptocurrency",
+    "altcoin",
+    "ripple",
+    "xrp",
+    "solana",
+    "dogecoin",
+    "nft",
+]
 
 
 FEED_TIMEOUT_SECONDS = 15
@@ -154,6 +171,8 @@ async def fetch_fxstreet_recent() -> list[dict]:
 def is_relevant(item: dict) -> bool:
     """Keyword pre-filter against title+summary, case-insensitive."""
     haystack = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+    if any(term in haystack for term in EXCLUDE_KEYWORDS):
+        return False
     return any(keyword in haystack for keyword in GOLD_KEYWORDS)
 
 

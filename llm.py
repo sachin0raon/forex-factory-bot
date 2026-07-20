@@ -114,9 +114,18 @@ _SENTIMENT_SYSTEM_PROMPT = (
 
 
 def _strip_code_fence(text: str) -> str:
-    """Remove a ```json ... ``` or ``` ... ``` wrapper if Claude added one."""
+    """Extract the outermost JSON array/object, stripping code fences and any trailing garbage."""
+    # Unwrap explicit ```json ... ``` or ``` ... ``` blocks first
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-    return match.group(1) if match else text
+    text = match.group(1) if match else text.strip()
+    # Discard anything before the first [ or { and after the matching last ] or }
+    # (handles models that append stray backticks or prose after the JSON block)
+    for open_ch, close_ch in (("[", "]"), ("{", "}")):
+        s = text.find(open_ch)
+        e = text.rfind(close_ch)
+        if s != -1 and e > s:
+            return text[s : e + 1]
+    return text
 
 
 async def score_news_batch(items: list[dict]) -> list[dict]:

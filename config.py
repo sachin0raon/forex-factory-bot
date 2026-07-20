@@ -62,7 +62,7 @@ SUMMARY_MODEL: str = os.getenv("SUMMARY_MODEL") or _DEFAULT_SUMMARY_MODEL
 # Max output tokens per LLM call. Sentiment batches can be large (one JSON
 # entry per news item), so SENTIMENT_MAX_TOKENS needs room for 50+ items.
 SENTIMENT_MAX_TOKENS: int = int(os.getenv("SENTIMENT_MAX_TOKENS", "8192"))
-SUMMARY_MAX_TOKENS: int = int(os.getenv("SUMMARY_MAX_TOKENS", "512"))
+SUMMARY_MAX_TOKENS: int = int(os.getenv("SUMMARY_MAX_TOKENS", "1024"))
 MATCH_MAX_TOKENS: int = int(os.getenv("MATCH_MAX_TOKENS", "256"))
 EVENT_SUMMARY_MAX_TOKENS: int = int(os.getenv("EVENT_SUMMARY_MAX_TOKENS", "384"))
 

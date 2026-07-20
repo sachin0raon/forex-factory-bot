@@ -198,7 +198,13 @@ async def fetch_and_notify_news() -> list[dict]:
     scored_items = await llm.score_news_batch(new_items)
 
     await db.upsert_news_items(scored_items)
-    await _notify_subscribers_news(scored_items)
+
+    actionable = [i for i in scored_items if i.get("sentiment", "neutral") != "neutral"]
+    if actionable:
+        await _notify_subscribers_news(actionable)
+    else:
+        logger.info("News poll: all %d item(s) scored neutral, skipping notification", len(scored_items))
+
     return scored_items
 
 
