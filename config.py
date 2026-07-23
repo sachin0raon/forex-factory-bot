@@ -51,6 +51,13 @@ else:
 # How often (minutes) to poll news RSS feeds
 NEWS_POLL_MINUTES: int = int(os.getenv("NEWS_POLL_MINUTES", "15"))
 
+# Set to "false" to disable the recurring news poll job entirely (e.g. if
+# you only want ForexFactory calendar events). /fetchnews still works
+# on-demand regardless of this flag, since that's an explicit user action.
+NEWS_POLLING_ENABLED: bool = os.getenv("NEWS_POLLING_ENABLED", "true").strip().lower() not in (
+    "false", "0", "no",
+)
+
 # Cheap/fast model for per-item sentiment scoring (runs every poll).
 # `or` (not getenv's default arg) so an accidentally-blank env var falls back
 # too, not just a fully-unset one.

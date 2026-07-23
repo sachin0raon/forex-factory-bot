@@ -22,6 +22,7 @@ from config import (
     ARTICLE_SEARCH_RETRY_MINUTES,
     DEFAULT_CRON,
     NEWS_POLL_MINUTES,
+    NEWS_POLLING_ENABLED,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,18 +75,20 @@ async def start_scheduler() -> None:
         replace_existing=True,
         name="ForexFactory weekly fetch",
     )
-    sched.add_job(
-        fetch_and_notify_news,
-        trigger=IntervalTrigger(minutes=NEWS_POLL_MINUTES),
-        id=NEWS_JOB_ID,
-        replace_existing=True,
-        name="Gold/USD news poll",
-    )
+    if NEWS_POLLING_ENABLED:
+        sched.add_job(
+            fetch_and_notify_news,
+            trigger=IntervalTrigger(minutes=NEWS_POLL_MINUTES),
+            id=NEWS_JOB_ID,
+            replace_existing=True,
+            name="Gold/USD news poll",
+        )
 
     sched.start()
     logger.info(
-        "Scheduler started with cron: %s (news poll every %d min)",
-        cron_expr, NEWS_POLL_MINUTES,
+        "Scheduler started with cron: %s (news poll %s)",
+        cron_expr,
+        f"every {NEWS_POLL_MINUTES} min" if NEWS_POLLING_ENABLED else "disabled",
     )
 
 

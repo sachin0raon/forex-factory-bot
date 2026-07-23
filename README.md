@@ -55,6 +55,11 @@ GEMINI_API_KEY=your_gemini_api_key_here
 # How often (minutes) to poll gold/USD news RSS feeds
 NEWS_POLL_MINUTES=15
 
+# Set to false to disable the recurring news poll entirely (e.g. if you only
+# want ForexFactory calendar events). /fetchnews still works on-demand
+# regardless of this flag.
+NEWS_POLLING_ENABLED=true
+
 # Cheap/fast model for per-item sentiment scoring (runs every poll).
 # Leave unset to default per LLM_PROVIDER (claude-haiku-4-5-20251001 / gemini-2.5-flash-lite).
 # SENTIMENT_MODEL=gemini-2.5-flash-lite
