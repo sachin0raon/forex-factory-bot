@@ -21,6 +21,7 @@ from config import (
     ARTICLE_SEARCH_MAX_ATTEMPTS,
     ARTICLE_SEARCH_RETRY_MINUTES,
     DEFAULT_CRON,
+    NEWS_IMPACT_LEVELS,
     NEWS_POLL_MINUTES,
     NEWS_POLLING_ENABLED,
 )
@@ -175,7 +176,9 @@ async def fetch_and_notify_news() -> list[dict]:
     """
     Scheduled job: poll news feeds, filter to gold/USD-relevant items, dedupe
     against the DB (read-only check), score genuinely new items with Claude,
-    persist the scored items, and broadcast to subscribers.
+    persist the scored items, and broadcast the ones matching
+    NEWS_IMPACT_LEVELS to subscribers. All scored items are persisted
+    regardless of impact — the filter only gates the push notification.
 
     Nothing is written to the DB until *after* scoring succeeds: if
     llm.score_news_batch raises (rate limit, timeout, network blip), this
@@ -204,10 +207,21 @@ async def fetch_and_notify_news() -> list[dict]:
 
     actionable = [i for i in scored_items if i.get("sentiment", "neutral") != "neutral"]
     if actionable:
-        await _notify_subscribers_news(actionable)
+        # Every scored item is persisted regardless (so /news and /summary keep
+        # full context) — NEWS_IMPACT_LEVELS only gates the push notification.
+        notifiable = [
+            item for item in actionable
+            if item.get("impact", "medium") in NEWS_IMPACT_LEVELS
+        ]
+        if notifiable:
+            await _notify_subscribers_news(notifiable)
+        else:
+            logger.info(
+                "News poll: %d item(s) scored, none matched NEWS_IMPACT_LEVELS=%s",
+                len(scored_items), sorted(NEWS_IMPACT_LEVELS),
+            )
     else:
         logger.info("News poll: all %d item(s) scored neutral, skipping notification", len(scored_items))
-
     return scored_items
 
 

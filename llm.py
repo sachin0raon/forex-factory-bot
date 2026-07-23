@@ -109,7 +109,11 @@ _SENTIMENT_SYSTEM_PROMPT = (
     "no prose, no markdown fences. Each element must be an object with exactly "
     'these keys: "guid" (copied verbatim from the input), "sentiment" (one of '
     '"bullish", "bearish", "neutral" for gold), "score" (a number from -1.0 '
-    "bearish to 1.0 bullish), and \"rationale\" (a single short sentence)."
+    'bearish to 1.0 bullish), "impact" (one of "high", "medium", "low" — how '
+    "market-moving this is for gold; e.g. Fed rate decisions/NFP/CPI prints/"
+    "FOMC statements are high, related-but-secondary commentary or forecasts "
+    "are medium, minor/speculative/opinion pieces are low), and \"rationale\" "
+    "(a single short sentence)."
 )
 
 
@@ -131,8 +135,8 @@ def _strip_code_fence(text: str) -> str:
 async def score_news_batch(items: list[dict]) -> list[dict]:
     """
     Score a batch of news items for gold sentiment/bias in a single API call.
-    Returns copies of *items* with sentiment/score/rationale added; items the
-    model doesn't return a match for keep neutral/zero defaults.
+    Returns copies of *items* with sentiment/score/impact/rationale added;
+    items the model doesn't return a match for keep neutral/zero/medium defaults.
     """
     if not items:
         return []
@@ -171,6 +175,7 @@ async def score_news_batch(items: list[dict]) -> list[dict]:
                 **item,
                 "sentiment": scored.get("sentiment", "neutral"),
                 "score": scored.get("score", 0.0),
+                "impact": scored.get("impact", "medium"),
                 "rationale": scored.get("rationale", ""),
             }
         )

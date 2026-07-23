@@ -177,14 +177,17 @@ def is_relevant(item: dict) -> bool:
 
 
 _SENTIMENT_EMOJI = {"bullish": "🟢", "bearish": "🔴", "neutral": "⚪"}
+_IMPACT_EMOJI = {"high": "🔺", "medium": "🔸", "low": "▫️"}
 
 
 def format_news_message(item: dict) -> str:
     """Build a Telegram MarkdownV2 message for a single scored news item."""
     sentiment = (item.get("sentiment") or "neutral").lower()
     emoji = _SENTIMENT_EMOJI.get(sentiment, "⚪")
+    impact = (item.get("impact") or "medium").lower()
+    impact_emoji = _IMPACT_EMOJI.get(impact, "🔸")
 
-    lines = [f"{emoji} *{escape_md(item['title'])}*"]
+    lines = [f"{impact_emoji} {emoji} *{escape_md(item['title'])}*"]
 
     rationale = item.get("rationale")
     if rationale:

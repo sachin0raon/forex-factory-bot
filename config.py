@@ -58,6 +58,23 @@ NEWS_POLLING_ENABLED: bool = os.getenv("NEWS_POLLING_ENABLED", "true").strip().l
     "false", "0", "no",
 )
 
+# Comma-separated impact levels ("high", "medium", "low") that trigger a push
+# notification. Every scored item is still stored regardless (so /news and
+# /summary keep full context) — this only gates the automatic broadcast.
+_VALID_IMPACT_LEVELS = {"high", "medium", "low"}
+_raw_impact_levels = [
+    level.strip().lower()
+    for level in os.getenv("NEWS_IMPACT_LEVELS", "high").split(",")
+    if level.strip()
+]
+_invalid_impact_levels = [lvl for lvl in _raw_impact_levels if lvl not in _VALID_IMPACT_LEVELS]
+if _invalid_impact_levels:
+    logger.warning(
+        "Ignoring invalid NEWS_IMPACT_LEVELS value(s): %s (valid: high, medium, low)",
+        ", ".join(_invalid_impact_levels),
+    )
+NEWS_IMPACT_LEVELS: set[str] = {lvl for lvl in _raw_impact_levels if lvl in _VALID_IMPACT_LEVELS} or {"high"}
+
 # Cheap/fast model for per-item sentiment scoring (runs every poll).
 # `or` (not getenv's default arg) so an accidentally-blank env var falls back
 # too, not just a fully-unset one.

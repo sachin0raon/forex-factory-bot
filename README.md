@@ -7,7 +7,7 @@ A Telegram bot that monitors the [ForexFactory](https://www.forexfactory.com/) c
 - **Automated Scraping**: Uses `cloudscraper` to bypass Cloudflare and fetch calendar events directly from the ForexFactory API.
 - **Dynamic Notifications**: Subscribers are notified about new economic events automatically, formatted with emojis for impact levels (🔴 High, 🟠 Medium) and localized to IST.
 - **Smart "Actual" Updates**: For scheduled future events, the bot dynamically schedules one-off check tasks (30s after the event occurs) to scrape the released "actual" metrics and notify subscribers.
-- **Gold/USD News + Sentiment**: Polls free RSS feeds (FXStreet, InvestingLive) every `NEWS_POLL_MINUTES`, filters to gold/USD-relevant items, scores each with the LLM (bullish/bearish/neutral + rationale), and notifies subscribers.
+- **Gold/USD News + Sentiment**: Polls free RSS feeds (FXStreet, InvestingLive) every `NEWS_POLL_MINUTES`, filters to gold/USD-relevant items, scores each with the LLM (bullish/bearish/neutral + high/medium/low impact + rationale), and notifies subscribers about items matching `NEWS_IMPACT_LEVELS`.
 - **On-Demand Outlook**: `/summary` combines recent scored news with upcoming calendar events into a single LLM-generated gold outlook.
 - **Speech/Testimony Coverage**: Calendar events with no forecast value (e.g. "President Trump Speaks", "Fed Chairman Warsh Testifies") get an automatic FXStreet article search starting `ARTICLE_SEARCH_DELAY_MINUTES` after the event, retrying up to `ARTICLE_SEARCH_MAX_ATTEMPTS` times `ARTICLE_SEARCH_RETRY_MINUTES` apart. The LLM matches the event to the right article and summarizes it + the market reaction; the outcome (found or not) is sent to subscribers and persisted in Mongo.
 - **Pluggable LLM Backend**: `LLM_PROVIDER` switches between Claude (Anthropic) and Gemini (Google) for all of the above — only the active provider's API key is required. Gemini's Flash/Flash-Lite models are free-tier as of 2026, a good option if you don't have an Anthropic subscription.
@@ -59,6 +59,12 @@ NEWS_POLL_MINUTES=15
 # want ForexFactory calendar events). /fetchnews still works on-demand
 # regardless of this flag.
 NEWS_POLLING_ENABLED=true
+
+# Comma-separated impact levels ("high", "medium", "low") that trigger a push
+# notification. Every scored item is still stored regardless (so /news and
+# /summary keep full context) — this only gates the automatic broadcast.
+# Default: high only (cuts low/medium-impact noise).
+NEWS_IMPACT_LEVELS=high
 
 # Cheap/fast model for per-item sentiment scoring (runs every poll).
 # Leave unset to default per LLM_PROVIDER (claude-haiku-4-5-20251001 / gemini-2.5-flash-lite).
